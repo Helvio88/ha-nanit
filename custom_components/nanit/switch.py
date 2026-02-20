@@ -35,12 +35,12 @@ SWITCHES: tuple[NanitSwitchEntityDescription, ...] = (
         turn_off_fn=lambda client: client.set_night_light(False),
     ),
     NanitSwitchEntityDescription(
-        key="sleep_mode",
-        translation_key="sleep_mode",
-        entity_registry_enabled_default=False,
-        value_fn=lambda data: data.get("settings", {}).get("sleep_mode"),
-        turn_on_fn=lambda client: client.set_sleep_mode(True),
-        turn_off_fn=lambda client: client.set_sleep_mode(False),
+        key="camera_power",
+        translation_key="camera_power",
+        entity_registry_enabled_default=True,
+        value_fn=lambda data: not data.get("settings", {}).get("sleep_mode", False),
+        turn_on_fn=lambda client: client.set_sleep_mode(False),
+        turn_off_fn=lambda client: client.set_sleep_mode(True),
     ),
     NanitSwitchEntityDescription(
         key="status_led",

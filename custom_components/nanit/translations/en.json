@@ -106,7 +106,7 @@
     },
     "switch": {
       "night_light": { "name": "Night Light" },
-      "sleep_mode": { "name": "Sleep Mode" },
+      "camera_power": { "name": "Camera Power" },
       "status_led": { "name": "Status LED" },
       "mic_mute": { "name": "Microphone Mute" }
     },

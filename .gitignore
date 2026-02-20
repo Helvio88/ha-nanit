@@ -38,3 +38,6 @@ nanitd/src/nanitd
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local dev config
+.env
