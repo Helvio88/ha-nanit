@@ -124,7 +124,14 @@ class NanitApiClient:
 
 
 class NanitAuthClient:
-    """Client for Nanit Cloud Auth."""
+    """Client for Nanit Cloud Auth.
+
+    The Nanit login flow:
+    1. POST /login with {email, password} + header nanit-api-version: 1
+       - Returns mfa_token in response body (may be 200 or 401)
+    2. POST /login with {email, password, mfa_token, mfa_code} + header nanit-api-version: 1
+       - Returns {access_token, refresh_token} on success (HTTP 201)
+    """
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
         """Initialize."""
@@ -132,89 +139,110 @@ class NanitAuthClient:
         self._base_url = NANIT_API_BASE
         self._headers = {
             "Content-Type": "application/json",
-            "Nanit-App-Version": "1.0.0",  # Example header, might be needed
+            "nanit-api-version": "1",
         }
 
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        json: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Make a request to the Cloud API."""
-        url = f"{self._base_url}{path}"
-        merged_headers = self._headers.copy()
-        if headers:
-            merged_headers.update(headers)
+    async def login(self, email: str, password: str) -> dict[str, Any]:
+        """Login with email/password. Raises NanitMfaRequiredError if MFA needed."""
+        url = f"{self._base_url}/login"
+        payload = {"email": email, "password": password}
 
         try:
-            async with self._session.request(
-                method, url, json=json, headers=merged_headers
+            async with self._session.post(
+                url, json=payload, headers=self._headers
             ) as response:
+                data = await response.json(content_type=None)
+
+                # MFA required: Nanit returns mfa_token in body (status may be 200 or 401)
+                mfa_token = data.get("mfa_token") if isinstance(data, dict) else None
+                if mfa_token:
+                    raise NanitMfaRequiredError(mfa_token)
+
+                # Successful login without MFA (HTTP 201)
+                if response.status in (200, 201) and data.get("access_token"):
+                    return data
+
+                # Auth failure
                 if response.status == 401:
-                    try:
-                        data = await response.json()
-                        if data.get("mfa_required"):
-                            raise NanitMfaRequiredError(data.get("mfa_token", ""))
-                    except (ValueError, TypeError):
-                        pass
-                    raise NanitAuthError("Authentication failed")
+                    raise NanitAuthError("Invalid email or password")
 
-                if response.status >= 400:
-                    text = await response.text()
-                    _LOGGER.error("Cloud API error %s %s: %s", method, url, text)
-                    raise NanitAuthError(f"Cloud API error: {response.status}")
-
-                return await response.json() # type: ignore
+                raise NanitAuthError(f"Login failed: HTTP {response.status}")
         except aiohttp.ClientError as err:
             raise NanitConnectionError(f"Connection error: {err}") from err
 
-    async def login(self, email: str, password: str) -> dict[str, Any]:
-        """Login."""
-        return await self._request(
-            "POST", "/login", json={"email": email, "password": password}
-        )
+    async def verify_mfa(
+        self, email: str, password: str, mfa_token: str, code: str
+    ) -> dict[str, Any]:
+        """Complete MFA by re-posting to /login with all credentials."""
+        url = f"{self._base_url}/login"
+        payload = {
+            "email": email,
+            "password": password,
+            "mfa_token": mfa_token,
+            "mfa_code": code,
+        }
 
-    async def verify_mfa(self, mfa_token: str, code: str) -> dict[str, Any]:
-        """Verify MFA."""
-        return await self._request(
-            "POST", "/login/mfa_token", json={"token": mfa_token, "code": code}
-        )
+        try:
+            async with self._session.post(
+                url, json=payload, headers=self._headers
+            ) as response:
+                if response.status in (200, 201):
+                    data = await response.json(content_type=None)
+                    if data.get("access_token"):
+                        return data
+
+                if response.status == 401:
+                    raise NanitAuthError("Invalid MFA code")
+
+                text = await response.text()
+                raise NanitAuthError(f"MFA verification failed: HTTP {response.status} {text}")
+        except aiohttp.ClientError as err:
+            raise NanitConnectionError(f"Connection error: {err}") from err
 
     async def refresh_token(self, access_token: str, refresh_token: str) -> dict[str, Any]:
         """Refresh token."""
-        return await self._request(
-            "POST",
-            "/tokens/refresh",
-            json={"refresh_token": refresh_token},
-            headers={"Authorization": access_token},
-        )
+        url = f"{self._base_url}/tokens/refresh"
+        headers = {
+            **self._headers,
+            "Authorization": f"Bearer {access_token}",
+        }
+        payload = {"refresh_token": refresh_token}
+
+        try:
+            async with self._session.post(
+                url, json=payload, headers=headers
+            ) as response:
+                if response.status in (200, 201):
+                    return await response.json(content_type=None)
+
+                if response.status == 404:
+                    raise NanitAuthError("Refresh token expired, re-login required")
+
+                raise NanitAuthError(f"Token refresh failed: HTTP {response.status}")
+        except aiohttp.ClientError as err:
+            raise NanitConnectionError(f"Connection error: {err}") from err
 
     async def get_babies(self, access_token: str) -> list[dict[str, Any]]:
-        """Get babies."""
-        # The prompt says: GET /babies with Authorization: {access_token} header
-        # But wait, usually Authorization header needs 'Bearer ' prefix.
-        # The prompt says "Authorization: {access_token} header". I will assume it means the value is the token directly based on prompt,
-        # but standard is Bearer. I'll stick to prompt "Authorization: {access_token}".
-        # Actually, let's look at `refresh_token` in prompt: "Authorization: {access_token} header".
-        # So I will send just the token.
-        
-        # Wait, usually `get_babies` returns a list.
-        # "Get babies: GET /babies ... Returns: list[dict]" implied?
-        # The prompt says: "Get babies: GET /babies ...". It doesn't specify return format explicitly but `get_babies(access_token: str) -> list[dict]`
-        # in API section.
-        
-        response = await self._request(
-            "GET", "/babies", headers={"Authorization": access_token}
-        )
-        # response should be the list of babies or a dict containing it?
-        # Usually REST APIs return a dict wrapper.
-        # But the type hint says list[dict].
-        # I'll return response assuming it's the list or extract it if it's a dict.
-        if isinstance(response, list):
-            return response
-        if "babies" in response:
-            return response["babies"] # type: ignore
-        # Fallback
-        return [response] if isinstance(response, dict) else []
+        """Get babies list."""
+        url = f"{self._base_url}/babies"
+        headers = {
+            **self._headers,
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        try:
+            async with self._session.get(url, headers=headers) as response:
+                if response.status == 401:
+                    raise NanitAuthError("Unauthorized")
+
+                if response.status != 200:
+                    raise NanitApiError(f"Get babies failed: HTTP {response.status}")
+
+                data = await response.json(content_type=None)
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict) and "babies" in data:
+                    return data["babies"]
+                return []
+        except aiohttp.ClientError as err:
+            raise NanitConnectionError(f"Connection error: {err}") from err

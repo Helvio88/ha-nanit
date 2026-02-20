@@ -11,7 +11,14 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfIlluminance, UnitOfTemperature
+from homeassistant.const import PERCENTAGE, UnitOfTemperature
+
+# UnitOfIlluminance was added in HA 2024.x; use string fallback for older versions
+try:
+    from homeassistant.const import UnitOfIlluminance
+except ImportError:
+    class UnitOfIlluminance:  # type: ignore[no-redef]
+        LUX = "lx"
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
