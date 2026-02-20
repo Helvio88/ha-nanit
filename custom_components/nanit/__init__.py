@@ -23,6 +23,7 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_BABY_NAME,
     CONF_BABY_UID,
+    CONF_CAMERA_IP,
     CONF_CAMERA_UID,
     CONF_HOST,
     CONF_REFRESH_TOKEN,
@@ -114,6 +115,59 @@ async def _async_resolve_addon_host() -> str | None:
     return None
 
 
+async def _async_set_addon_option(key: str, value: str) -> None:
+    """Set a single add-on option via the Supervisor API.
+
+    Reads current options, merges the new key/value, and writes back.
+    This triggers the add-on to pick up the new value on next restart.
+    """
+    full_slug = await _async_resolve_addon_slug()
+    if not full_slug:
+        LOGGER.warning("Cannot set add-on option: slug not found")
+        return
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Read current options
+            resp = await session.get(
+                f"http://supervisor/addons/{full_slug}/info",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            )
+            if resp.status != 200:
+                return
+            data = await resp.json()
+            options = data.get("data", {}).get("options", {})
+
+            # Merge new option
+            options[key] = value
+
+            # Write back
+            resp = await session.post(
+                f"http://supervisor/addons/{full_slug}/options",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"options": options},
+                timeout=aiohttp.ClientTimeout(total=10),
+            )
+            if resp.status == 200:
+                LOGGER.info("Set add-on option %s=%s", key, value)
+                # Restart add-on to pick up new option
+                await session.post(
+                    f"http://supervisor/addons/{full_slug}/restart",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                )
+            else:
+                text = await resp.text()
+                LOGGER.warning("Failed to set add-on option: %s", text)
+    except Exception:
+        LOGGER.debug("Failed to set add-on option", exc_info=True)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: NanitConfigEntry) -> bool:
     """Set up Nanit from a config entry."""
     host = entry.data.get(CONF_HOST, DEFAULT_HOST)
@@ -177,6 +231,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: NanitConfigEntry) -> boo
                         "nanitd add-on is authenticated but not ready. "
                         "Check add-on logs."
                     )
+
+            # Push camera_ip to add-on options if configured
+            camera_ip = entry.data.get(CONF_CAMERA_IP, "")
+            if camera_ip:
+                await _async_set_addon_option("camera_ip", camera_ip)
         except NanitConnectionError as err:
             await addon_session.close()
             raise ConfigEntryNotReady(

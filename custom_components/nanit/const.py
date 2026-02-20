@@ -27,6 +27,7 @@ CONF_REFRESH_TOKEN = "refresh_token"
 CONF_BABY_UID = "baby_uid"
 CONF_CAMERA_UID = "camera_uid"
 CONF_BABY_NAME = "baby_name"
+CONF_CAMERA_IP = "camera_ip"
 
 # Transport Options
 TRANSPORT_LOCAL = "local"

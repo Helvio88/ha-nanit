@@ -39,7 +39,8 @@
         "title": "Transport Mode",
         "description": "Choose how the integration communicates with your Nanit camera.",
         "data": {
-          "transport": "Transport"
+          "transport": "Transport",
+          "camera_ip": "Camera IP Address (optional, for direct local connection)"
         }
       },
       "reauth_confirm": {
@@ -59,10 +60,11 @@
       },
       "reconfigure": {
         "title": "Reconfigure Nanit",
-        "description": "Update Go backend URL or transport mode.",
+        "description": "Update Go backend URL, transport mode, or camera IP.",
         "data": {
           "host": "Go Backend URL",
-          "transport": "Transport"
+          "transport": "Transport",
+          "camera_ip": "Camera IP Address (optional)"
         }
       }
     },

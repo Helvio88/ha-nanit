@@ -62,9 +62,21 @@ class NanitCamera(NanitEntity, Camera):
         return self.coordinator.data.get("hls", {}).get("enabled", False)
 
     async def stream_source(self) -> str | None:
-        """Return the HLS stream source."""
+        """Return the HLS stream source.
+
+        Auto-starts HLS if it is enabled but not yet running, so HA can
+        display the stream without requiring the user to manually turn it on.
+        """
         if not self.is_streaming:
-            return None
+            # Only attempt auto-start when the camera entity is considered "on"
+            if self.is_on:
+                try:
+                    await self._client.start_hls()
+                    await self.coordinator.async_request_refresh()
+                except Exception:  # noqa: BLE001
+                    return None
+            else:
+                return None
         return self._client.hls_url
 
     async def async_camera_image(

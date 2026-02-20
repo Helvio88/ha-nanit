@@ -19,6 +19,8 @@ map:
   - ssl:ro
 options:
   log_level: info
+  camera_ip: ""
 schema:
   log_level: list(trace|debug|info|warning|error)?
+  camera_ip: str?
 

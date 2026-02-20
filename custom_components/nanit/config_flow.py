@@ -29,6 +29,7 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_BABY_NAME,
     CONF_BABY_UID,
+    CONF_CAMERA_IP,
     CONF_CAMERA_UID,
     CONF_EMAIL,
     CONF_HOST,
@@ -292,6 +293,7 @@ class NanitConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle transport selection."""
         if user_input is not None:
             transport = user_input[CONF_TRANSPORT]
+            camera_ip = user_input.get(CONF_CAMERA_IP, "")
 
             await self.async_set_unique_id(self._camera_uid or self._email)
             self._abort_if_unique_id_configured()
@@ -307,6 +309,9 @@ class NanitConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_STORE_CREDENTIALS: self._store_credentials,
                 CONF_USE_ADDON: self._use_addon,
             }
+
+            if camera_ip:
+                data[CONF_CAMERA_IP] = camera_ip
 
             if self._use_addon and self._addon_hostname:
                 data[CONF_HOST] = ADDON_HOST_MARKER
@@ -330,6 +335,7 @@ class NanitConfigFlow(ConfigFlow, domain=DOMAIN):
                             TRANSPORT_LOCAL_CLOUD: "Local + Cloud",
                         }
                     ),
+                    vol.Optional(CONF_CAMERA_IP, default=""): cv.string,
                 }
             ),
         )
@@ -452,6 +458,11 @@ class NanitConfigFlow(ConfigFlow, domain=DOMAIN):
             new_data = {**reconfigure_entry.data}
             new_data[CONF_HOST] = user_input.get(CONF_HOST, DEFAULT_HOST)
             new_data[CONF_TRANSPORT] = user_input[CONF_TRANSPORT]
+            camera_ip = user_input.get(CONF_CAMERA_IP, "")
+            if camera_ip:
+                new_data[CONF_CAMERA_IP] = camera_ip
+            else:
+                new_data.pop(CONF_CAMERA_IP, None)
             return self.async_update_reload_and_abort(
                 reconfigure_entry, data=new_data
             )
@@ -474,6 +485,10 @@ class NanitConfigFlow(ConfigFlow, domain=DOMAIN):
                             TRANSPORT_LOCAL_CLOUD: "Local + Cloud",
                         }
                     ),
+                    vol.Optional(
+                        CONF_CAMERA_IP,
+                        default=reconfigure_entry.data.get(CONF_CAMERA_IP, ""),
+                    ): cv.string,
                 }
             ),
             errors=errors,

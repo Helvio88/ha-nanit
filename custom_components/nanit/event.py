@@ -19,13 +19,13 @@ EVENT_DESCRIPTIONS: tuple[EventEntityDescription, ...] = (
         key="motion_event",
         translation_key="motion_event",
         event_types=["motion_detected"],
-        entity_registry_enabled_default=True,
+        entity_registry_enabled_default=False,
     ),
     EventEntityDescription(
         key="sound_event",
         translation_key="sound_event",
         event_types=["sound_detected"],
-        entity_registry_enabled_default=True,
+        entity_registry_enabled_default=False,
     ),
 )
 
@@ -91,7 +91,7 @@ class NanitEvent(CoordinatorEntity[NanitCloudCoordinator], EventEntity):
         target_type = event_type_map.get(self.entity_description.key)
 
         for event in reversed(events):
-            if event.get("type") != target_type:
+            if event.get("type", "").lower() != target_type:
                 continue
             event_time = event.get("time")
             if event_time is None:

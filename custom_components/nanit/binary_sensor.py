@@ -31,14 +31,14 @@ BINARY_SENSORS: tuple[NanitBinarySensorEntityDescription, ...] = (
         key="motion",
         translation_key="motion",
         device_class=BinarySensorDeviceClass.MOTION,
-        entity_registry_enabled_default=True,
+        entity_registry_enabled_default=False,
         value_fn=lambda data: data.get("sensors", {}).get("motion", {}).get("is_alert"),
     ),
     NanitBinarySensorEntityDescription(
         key="sound",
         translation_key="sound",
         device_class=BinarySensorDeviceClass.SOUND,
-        entity_registry_enabled_default=True,
+        entity_registry_enabled_default=False,
         value_fn=lambda data: data.get("sensors", {}).get("sound", {}).get("is_alert"),
     ),
     NanitBinarySensorEntityDescription(
@@ -54,7 +54,7 @@ BINARY_SENSORS: tuple[NanitBinarySensorEntityDescription, ...] = (
         key="connectivity",
         translation_key="connectivity",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        entity_registry_enabled_default=False,
+        entity_registry_enabled_default=True,
         value_fn=lambda data: data.get("status", {}).get("connected"),
     ),
 )

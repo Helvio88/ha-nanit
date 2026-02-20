@@ -52,7 +52,7 @@ SENSORS: tuple[NanitSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.ILLUMINANCE,
         native_unit_of_measurement=UnitOfIlluminance.LUX,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
+        entity_registry_enabled_default=True,
         value_fn=lambda data: data.get("light", {}).get("value"),
     ),
 )
