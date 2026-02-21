@@ -54,6 +54,7 @@ SWITCHES: tuple[NanitSwitchEntityDescription, ...] = (
     NanitSwitchEntityDescription(
         key="night_light",
         translation_key="night_light",
+        icon="mdi:lightbulb-night",
         entity_registry_enabled_default=True,
         value_fn=_night_light_value,
         turn_on_fn=lambda client: client.set_night_light(True),
@@ -62,6 +63,7 @@ SWITCHES: tuple[NanitSwitchEntityDescription, ...] = (
     NanitSwitchEntityDescription(
         key="camera_power",
         translation_key="camera_power",
+        icon="mdi:power",
         entity_registry_enabled_default=True,
         value_fn=lambda data: (
             None
