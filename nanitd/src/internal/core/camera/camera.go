@@ -151,6 +151,29 @@ func (c *Client) SendCommandNoWait(ctx context.Context, req *pb.Request) error {
 	return conn.Send(ctx, msg)
 }
 
+func (c *Client) sendCommandAndWait(
+	ctx context.Context,
+	req *pb.Request,
+	op string,
+) (*pb.Response, error) {
+	resp, err := c.SendCommand(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("camera: %s: empty response", op)
+	}
+	status := resp.GetStatusCode()
+	if status != 0 && (status < 200 || status >= 300) {
+		msg := resp.GetStatusMessage()
+		if msg == "" {
+			msg = "unknown error"
+		}
+		return nil, fmt.Errorf("camera: %s failed (status %d): %s", op, status, msg)
+	}
+	return resp, nil
+}
+
 // State returns the state store for reading current state.
 func (c *Client) State() *state.StateStore {
 	return c.store
@@ -398,11 +421,7 @@ func (c *Client) requestInitialState(ctx context.Context) error {
 		return fmt.Errorf("get sensor data: %w", err)
 	}
 
-	// Request settings
-	settingsReq := &pb.Request{
-		Type: pb.RequestType_GET_SETTINGS.Enum(),
-	}
-	if err := c.SendCommandNoWait(ctx, settingsReq); err != nil {
+	if err := c.requestSettingsState(ctx); err != nil {
 		return fmt.Errorf("get settings: %w", err)
 	}
 
@@ -415,13 +434,7 @@ func (c *Client) requestInitialState(ctx context.Context) error {
 		return fmt.Errorf("get status: %w", err)
 	}
 
-	// Request control state
-	nlTrue := true
-	controlReq := &pb.Request{
-		Type:        pb.RequestType_GET_CONTROL.Enum(),
-		GetControl_: &pb.GetControl{NightLight: &nlTrue},
-	}
-	if err := c.SendCommandNoWait(ctx, controlReq); err != nil {
+	if err := c.requestControlState(ctx); err != nil {
 		return fmt.Errorf("get control: %w", err)
 	}
 
@@ -460,7 +473,10 @@ func (c *Client) SetNightLight(ctx context.Context, on bool) error {
 		Type:    pb.RequestType_PUT_CONTROL.Enum(),
 		Control: &pb.Control{NightLight: nl.Enum()},
 	}
-	return c.SendCommandNoWait(ctx, req)
+	if _, err := c.sendCommandAndWait(ctx, req, "set night light"); err != nil {
+		return err
+	}
+	return c.requestControlState(ctx)
 }
 
 // SetSleepMode toggles sleep (standby) mode.
@@ -469,7 +485,10 @@ func (c *Client) SetSleepMode(ctx context.Context, enabled bool) error {
 		Type:     pb.RequestType_PUT_SETTINGS.Enum(),
 		Settings: &pb.Settings{SleepMode: &enabled},
 	}
-	return c.SendCommandNoWait(ctx, req)
+	if _, err := c.sendCommandAndWait(ctx, req, "set sleep mode"); err != nil {
+		return err
+	}
+	return c.requestSettingsState(ctx)
 }
 
 // SetVolume sets the camera speaker volume (0-100).
@@ -497,6 +516,28 @@ func (c *Client) SetStatusLED(ctx context.Context, enabled bool) error {
 		Settings: &pb.Settings{StatusLightOn: &enabled},
 	}
 	return c.SendCommandNoWait(ctx, req)
+}
+
+func (c *Client) requestControlState(ctx context.Context) error {
+	nlTrue := true
+	controlReq := &pb.Request{
+		Type:        pb.RequestType_GET_CONTROL.Enum(),
+		GetControl_: &pb.GetControl{NightLight: &nlTrue},
+	}
+	if err := c.SendCommandNoWait(ctx, controlReq); err != nil {
+		c.log.Debug("failed to refresh control state", "error", err)
+		return err
+	}
+	return nil
+}
+
+func (c *Client) requestSettingsState(ctx context.Context) error {
+	settingsReq := &pb.Request{Type: pb.RequestType_GET_SETTINGS.Enum()}
+	if err := c.SendCommandNoWait(ctx, settingsReq); err != nil {
+		c.log.Debug("failed to refresh settings state", "error", err)
+		return err
+	}
+	return nil
 }
 
 // StartStreaming tells the camera to start streaming to the given RTMP URL.
