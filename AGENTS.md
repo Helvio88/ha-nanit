@@ -25,7 +25,7 @@ custom_components/nanit      nanitd/src/           (local/cloud)
 - `custom_components/nanit/__init__.py` — `async_setup_entry` / `async_unload_entry`
 - `custom_components/nanit/config_flow.py` — UI setup + reauth/reconfigure
 - `custom_components/nanit/coordinator.py` — polling via `DataUpdateCoordinator`
-- `custom_components/nanit/*.py` — entities (sensor, switch, camera, event, etc.)
+- `custom_components/nanit/*.py` — entities (sensor, binary_sensor, switch, camera, etc.)
 - `custom_components/nanit/diagnostics.py` — redaction list for credentials
 - `custom_components/nanit/strings.json` + `translations/en.json` — user strings
 - `nanitd/src/` — Go daemon source

@@ -13,11 +13,11 @@ Keep an eye on your little one with this custom [Home Assistant](https://www.hom
 | Entity Type | Entities | Default Enabled |
 |-------------|----------|-----------------|
 | Sensor | Temperature, Humidity, Light (lux) | Temp, Humidity |
-| Binary Sensor | Motion, Sound, Night mode, Connectivity | No |
+| Binary Sensor | Cloud Motion, Cloud Sound (cloud polling, 5-min window) | Yes |
+| Binary Sensor | Motion, Sound, Night mode, Connectivity (local) | No |
 | Switch | Night light, Status LED, Mic mute | Night light |
 | Number | Volume (0-100%) | No |
 | Camera | HLS live stream with on/off control | Yes |
-| Event | Activity (motion + sound with timestamps, cloud only) | Yes |
 
 ## Quick Start
 
@@ -35,8 +35,8 @@ Choose how your data travels from the nursery to Home Assistant. You can change 
 
 | Mode | Description | Entities |
 |------|-------------|----------|
-| **Local** | All data comes directly from the Go backend. No cloud polling involved. | All except Event |
-| **Local + Cloud** | Combines backend data with Nanit cloud events for motion and sound. | All entities |
+| **Local** | All data comes directly from the Go backend. No cloud polling involved. | All except Cloud Motion/Sound |
+| **Local + Cloud** | Combines backend data with Nanit cloud polling for motion and sound detection. | All entities |
 
 ### Naptime and More
 - **Camera power**: Use the camera entity's on/off control to enter or exit standby.
@@ -159,6 +159,55 @@ The stream starts when you open it, so give it a few seconds to warm up. You can
 
 **Unavailable sensors**
 If sensors go dark, check that `nanitd` can reach the camera in the add-on logs. You can also check the status via `curl http://<addon-host>:8080/api/status` to see if `connected` is true.
+
+## Manual API Testing
+
+The cloud binary sensors read from the add-on endpoint `GET /api/events` (see `custom_components/nanit/api.py` and `custom_components/nanit/coordinator.py`).
+To inspect the raw response structure, use the helper scripts in `tools/` via `just`:
+
+```bash
+# Install Python dependencies (first time only)
+pip install requests
+
+# Login to Nanit cloud (interactive: email + password + MFA)
+just login
+
+# Fetch recent events (default: 10)
+just events
+
+# Fetch a specific number of events
+just events --limit 5
+```
+
+### Login + Token Provisioning (same flow as the integration)
+
+If you want to run `nanitd` locally, use the login helper to authenticate with Nanit
+and provision the tokens to your local daemon. This uses the same auth client as
+the Home Assistant integration (`custom_components/nanit/api.py`).
+
+```bash
+# Start nanitd locally (port 8080)
+cd nanitd/src
+go build ./...
+NANIT_HTTP_ADDR="0.0.0.0:8080" NANIT_SESSION_PATH="/tmp/nanit-session.json" ./nanitd
+
+# In another terminal: login and provision tokens to nanitd
+just login --host http://localhost:8080
+
+# Now test events
+just events
+just events --limit 5
+```
+
+If you only want tokens without provisioning:
+
+```bash
+just login --no-provision --json
+```
+
+If you see a connection error, nanitd isn't running or the host is wrong.
+Either start nanitd locally, use the add-on host, or pass `--no-provision`
+to only fetch tokens.
 
 ## License
 
