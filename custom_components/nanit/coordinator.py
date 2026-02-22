@@ -13,7 +13,13 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .api import NanitApiClient, NanitApiError, NanitAuthError, NanitConnectionError
+from .api import (
+    NanitApiClient,
+    NanitApiError,
+    NanitAuthError,
+    NanitConnectionError,
+    NanitUnavailableError,
+)
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,7 +61,7 @@ class NanitLocalCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except NanitAuthError as err:
             raise ConfigEntryAuthFailed(err) from err
-        except (NanitApiError, NanitConnectionError) as err:
+        except (NanitApiError, NanitConnectionError, NanitUnavailableError) as err:
             raise UpdateFailed(err) from err
 
 
@@ -72,7 +78,7 @@ class NanitCloudCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name=f"{DOMAIN}_cloud",
-            update_interval=timedelta(seconds=60),
+            update_interval=timedelta(seconds=30),
         )
         self.client = client
 
@@ -82,5 +88,5 @@ class NanitCloudCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return await self.client.get_events()
         except NanitAuthError as err:
             raise ConfigEntryAuthFailed(err) from err
-        except (NanitApiError, NanitConnectionError) as err:
+        except (NanitApiError, NanitConnectionError, NanitUnavailableError) as err:
             raise UpdateFailed(err) from err

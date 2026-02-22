@@ -11,8 +11,10 @@ PLATFORMS = [
     Platform.SWITCH,
     Platform.NUMBER,
     Platform.CAMERA,
-    Platform.EVENT,
 ]
+
+# Cloud event detection window (seconds)
+CLOUD_EVENT_WINDOW = 300
 
 # Config Keys
 CONF_EMAIL = "email"

@@ -102,7 +102,9 @@
       "motion": { "name": "Motion" },
       "sound": { "name": "Sound" },
       "night_mode": { "name": "Night Mode" },
-      "connectivity": { "name": "Connectivity" }
+      "connectivity": { "name": "Connectivity" },
+      "cloud_motion": { "name": "Cloud Motion" },
+      "cloud_sound": { "name": "Cloud Sound" }
     },
     "switch": {
       "night_light": { "name": "Night Light" },
@@ -115,9 +117,6 @@
     },
     "camera": {
       "camera": { "name": "Camera" }
-    },
-    "event": {
-      "activity": { "name": "Activity" }
     }
   }
 }

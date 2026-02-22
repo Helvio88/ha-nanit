@@ -23,6 +23,10 @@ class NanitConnectionError(NanitError):
     """Connection error."""
 
 
+class NanitUnavailableError(NanitError):
+    """Camera temporarily unavailable (503/504)."""
+
+
 class NanitAuthError(NanitError):
     """Authentication error."""
 
@@ -56,6 +60,12 @@ class NanitApiClient:
         url = f"{self._host}{path}"
         try:
             async with self._session.request(method, url, json=json) as response:
+                if response.status in (503, 504):
+                    text = await response.text()
+                    _LOGGER.debug("Camera unavailable %s %s: %s", method, url, text)
+                    raise NanitUnavailableError(
+                        f"Camera unavailable: {response.status}"
+                    )
                 if response.status >= 400:
                     text = await response.text()
                     _LOGGER.error("API error %s %s: %s", method, url, text)
