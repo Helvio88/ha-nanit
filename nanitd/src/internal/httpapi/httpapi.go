@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -162,6 +163,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	authenticated := s.tokenMgr != nil && s.tokenMgr.IsInitialized()
 	ready := s.ready.Load()
 
+	s.log.Info("handling GET /api/auth/status", "authenticated", authenticated, "ready", ready)
 	s.writeJSON(w, authStatusResponse{
 		Authenticated: authenticated,
 		Ready:         ready,
@@ -273,6 +275,20 @@ func (s *Server) readJSON(r *http.Request, v interface{}) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
+func (s *Server) cameraError(w http.ResponseWriter, err error) {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not connected"):
+		s.writeError(w, http.StatusServiceUnavailable, msg)
+	case strings.Contains(msg, "connection timeout"):
+		s.writeError(w, http.StatusGatewayTimeout, msg)
+	case strings.Contains(msg, "response timeout"):
+		s.writeError(w, http.StatusGatewayTimeout, msg)
+	default:
+		s.writeError(w, http.StatusInternalServerError, msg)
+	}
+}
+
 // --- Handlers ---
 
 type statusResponse struct {
@@ -282,28 +298,31 @@ type statusResponse struct {
 }
 
 func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+	s.log.Info("handling GET /api/status")
 	tok, err := s.tokenMgr.Token(r.Context())
 	var babies []auth.Baby
 	if err == nil {
 		babies = tok.Babies
 	}
 
-	snap := s.cam.State().Snapshot()
+	connected := s.cam.Connected()
+	s.log.Info("status response", "connected", connected, "baby_uid", s.babyUID, "baby_count", len(babies))
 	s.writeJSON(w, statusResponse{
-		Connected: s.cam.Connected(),
+		Connected: connected,
 		BabyUID:   s.babyUID,
 		Babies:    babies,
 	})
-	_ = snap // we already read it to check connection
 }
 
 func (s *Server) handleGetSensors(w http.ResponseWriter, _ *http.Request) {
 	snap := s.cam.State().Snapshot()
+	s.log.Info("handling GET /api/sensors", "sensor_count", len(snap.Sensors))
 	s.writeJSON(w, snap.Sensors)
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 	snap := s.cam.State().Snapshot()
+	s.log.Info("handling GET /api/settings")
 	s.writeJSON(w, map[string]interface{}{
 		"settings": snap.Settings,
 		"control":  snap.Control,
@@ -312,18 +331,22 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
+	s.log.Info("fetching cloud events", "baby_uid", s.babyUID)
 	tok, err := s.tokenMgr.Token(r.Context())
 	if err != nil {
+		s.log.Error("failed to get auth token for events", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "auth error: "+err.Error())
 		return
 	}
 
 	messages, err := s.api.GetMessages(r.Context(), tok.AuthToken, s.babyUID, 20)
 	if err != nil {
+		s.log.Error("failed to fetch cloud events", "baby_uid", s.babyUID, "error", err)
 		s.writeError(w, http.StatusBadGateway, "failed to fetch events: "+err.Error())
 		return
 	}
 
+	s.log.Info("cloud events fetched", "baby_uid", s.babyUID, "count", len(messages))
 	s.writeJSON(w, map[string]interface{}{"events": messages})
 }
 
@@ -342,8 +365,10 @@ func (s *Server) handleControlNightlight(w http.ResponseWriter, r *http.Request)
 		s.writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	s.log.Info("setting night light", "enabled", body.Enabled)
 	if err := s.cam.SetNightLight(r.Context(), body.Enabled); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.log.Error("night light control failed", "error", err)
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})
@@ -355,8 +380,10 @@ func (s *Server) handleControlSleep(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	s.log.Info("setting sleep mode", "enabled", body.Enabled)
 	if err := s.cam.SetSleepMode(r.Context(), body.Enabled); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.log.Error("sleep mode control failed", "error", err)
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})
@@ -376,8 +403,10 @@ func (s *Server) handleControlVolume(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "volume must be 0-100")
 		return
 	}
+	s.log.Info("setting volume", "level", body.Level)
 	if err := s.cam.SetVolume(r.Context(), body.Level); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.log.Error("volume control failed", "error", err)
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})
@@ -393,8 +422,10 @@ func (s *Server) handleControlMic(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	s.log.Info("setting mic mute", "muted", body.Muted)
 	if err := s.cam.SetMicMute(r.Context(), body.Muted); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.log.Error("mic mute control failed", "error", err)
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})
@@ -406,8 +437,10 @@ func (s *Server) handleControlStatusLED(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	s.log.Info("setting status LED", "enabled", body.Enabled)
 	if err := s.cam.SetStatusLED(r.Context(), body.Enabled); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.log.Error("status LED control failed", "error", err)
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})
@@ -428,7 +461,7 @@ func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.cam.StartStreaming(r.Context(), body.RTMPUrl); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})
@@ -436,7 +469,7 @@ func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStreamStop(w http.ResponseWriter, r *http.Request) {
 	if err := s.cam.StopStreaming(context.Background()); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.cameraError(w, err)
 		return
 	}
 	s.writeJSON(w, map[string]string{"status": "ok"})

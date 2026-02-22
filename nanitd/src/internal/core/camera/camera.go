@@ -34,6 +34,7 @@ type Client struct {
 	// pendingResponses tracks request IDs waiting for responses
 	pending   map[int32]chan *pb.Response
 	pendingMu sync.Mutex
+	wakeCh    chan struct{}
 }
 
 // NewClient creates a new camera client.
@@ -53,6 +54,7 @@ func NewClient(
 		bus:       bus,
 		log:       log,
 		pending:   make(map[int32]chan *pb.Response),
+		wakeCh:    make(chan struct{}, 1),
 	}
 }
 
@@ -115,6 +117,7 @@ func (c *Client) SendCommand(ctx context.Context, req *pb.Request) (*pb.Response
 
 	c.log.Debug("sending command", "type", req.GetType().String(), "id", id)
 	if err := conn.Send(ctx, msg); err != nil {
+		c.log.Error("failed to send command", "type", req.GetType().String(), "id", id, "error", err)
 		return nil, fmt.Errorf("camera: send: %w", err)
 	}
 
@@ -156,10 +159,26 @@ func (c *Client) sendCommandAndWait(
 	req *pb.Request,
 	op string,
 ) (*pb.Response, error) {
+	if err := c.ensureConnected(ctx, 20*time.Second); err != nil {
+		return nil, fmt.Errorf("camera: %s: %w", op, err)
+	}
+
 	resp, err := c.SendCommand(ctx, req)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		c.disconnect()
+		c.signalWake()
+		if waitErr := c.ensureConnected(ctx, 15*time.Second); waitErr != nil {
+			return nil, fmt.Errorf("camera: %s: reconnect failed: %w", op, err)
+		}
+		resp, err = c.SendCommand(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("camera: %s: %w", op, err)
+		}
 	}
+
 	if resp == nil {
 		return nil, fmt.Errorf("camera: %s: empty response", op)
 	}
@@ -172,6 +191,44 @@ func (c *Client) sendCommandAndWait(
 		return nil, fmt.Errorf("camera: %s failed (status %d): %s", op, status, msg)
 	}
 	return resp, nil
+}
+
+func (c *Client) signalWake() {
+	select {
+	case c.wakeCh <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Client) ensureConnected(ctx context.Context, timeout time.Duration) error {
+	c.connMu.Lock()
+	conn := c.conn
+	c.connMu.Unlock()
+	if conn != nil {
+		return nil
+	}
+
+	c.signalWake()
+
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return fmt.Errorf("camera: connection timeout after %s", timeout)
+		case <-ticker.C:
+			c.connMu.Lock()
+			conn = c.conn
+			c.connMu.Unlock()
+			if conn != nil {
+				return nil
+			}
+		}
+	}
 }
 
 // State returns the state store for reading current state.
@@ -205,43 +262,60 @@ func (c *Client) runLoop(ctx context.Context) {
 		default:
 		}
 
-		err := c.connectAndRun(ctx)
+		connected, err := c.connectAndRun(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				c.log.Info("camera: shutting down")
 				return
 			}
-			c.log.Error("camera: connection error", "error", err, "retry_in", backoff)
+			c.log.Error("camera: connection error", "error", err, "retry_in", backoff, "camera_uid", c.cameraUID)
 		}
 
 		c.disconnect()
 
-		// Exponential backoff
+		if connected {
+			backoff = time.Second
+		}
+
+		// Interruptible backoff — wake signal skips the wait
+		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-time.After(backoff):
+		case <-c.wakeCh:
+			timer.Stop()
+			select {
+			case <-timer.C:
+			default:
+			}
+			backoff = time.Second
+			c.log.Info("wake signal received, reconnecting immediately")
+		case <-timer.C:
 		}
+
 		backoff = time.Duration(math.Min(float64(backoff)*2, float64(maxBackoff)))
 	}
 }
 
-func (c *Client) connectAndRun(ctx context.Context) error {
+func (c *Client) connectAndRun(ctx context.Context) (connected bool, err error) {
+	c.log.Info("attempting camera connection", "camera_uid", c.cameraUID)
 	tok, err := c.tokenMgr.Token(ctx)
 	if err != nil {
-		return fmt.Errorf("get token: %w", err)
+		return false, fmt.Errorf("get token: %w", err)
 	}
 
 	conn, err := c.dialer.Dial(ctx, c.cameraUID, tok.AuthToken)
 	if err != nil {
-		// Try refreshing token on auth failure
+		c.log.Warn("initial dial failed, attempting token refresh", "error", err)
 		newTok, refreshErr := c.tokenMgr.ForceRefresh(ctx)
 		if refreshErr != nil {
-			return fmt.Errorf("dial failed (%w) and refresh failed: %v", err, refreshErr)
+			return false, fmt.Errorf("dial failed (%w) and refresh failed: %v", err, refreshErr)
 		}
+		c.log.Info("token refreshed after dial failure, retrying connection")
 		conn, err = c.dialer.Dial(ctx, c.cameraUID, newTok.AuthToken)
 		if err != nil {
-			return fmt.Errorf("dial after refresh: %w", err)
+			return false, fmt.Errorf("dial after refresh: %w", err)
 		}
 	}
 
@@ -249,27 +323,28 @@ func (c *Client) connectAndRun(ctx context.Context) error {
 	c.conn = conn
 	c.connMu.Unlock()
 	c.store.SetConnected(true)
+	connected = true
 
-	// Reset backoff on successful connection
-	c.log.Info("camera connected, initializing")
+	// Set initial read deadline — extended by pong handler and incoming messages
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
-	// Request initial state
+	c.log.Info("camera connected, initializing", "camera_uid", c.cameraUID)
+
 	if err := c.requestInitialState(ctx); err != nil {
 		c.log.Error("failed to request initial state", "error", err)
 	}
 
-	// Start keepalive goroutine
 	keepaliveCtx, keepaliveCancel := context.WithCancel(ctx)
 	defer keepaliveCancel()
 	go c.keepaliveLoop(keepaliveCtx, conn)
 
-	// Read loop
-	return c.readLoop(ctx, conn)
+	return connected, c.readLoop(ctx, conn)
 }
 
 func (c *Client) disconnect() {
 	c.connMu.Lock()
 	if c.conn != nil {
+		c.log.Info("disconnecting camera", "camera_uid", c.cameraUID)
 		c.conn.Close()
 		c.conn = nil
 	}
@@ -278,7 +353,7 @@ func (c *Client) disconnect() {
 }
 
 func (c *Client) keepaliveLoop(ctx context.Context, conn transport.Conn) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -286,14 +361,12 @@ func (c *Client) keepaliveLoop(ctx context.Context, conn transport.Conn) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			msg := &pb.Message{
-				Type: pb.Message_KEEPALIVE.Enum(),
-			}
-			if err := conn.Send(ctx, msg); err != nil {
-				c.log.Error("keepalive send failed", "error", err)
+			if err := conn.Ping(); err != nil {
+				c.log.Warn("keepalive ping failed, triggering reconnect", "error", err)
+				c.disconnect()
 				return
 			}
-			c.log.Debug("keepalive sent")
+			c.log.Debug("keepalive ping sent")
 		}
 	}
 }
@@ -310,6 +383,8 @@ func (c *Client) readLoop(ctx context.Context, conn transport.Conn) error {
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
+
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		c.handleMessage(msg)
 	}
@@ -340,22 +415,25 @@ func (c *Client) handleCameraRequest(req *pb.Request) {
 	case pb.RequestType_PUT_SENSOR_DATA:
 		if data := req.GetSensorData_(); len(data) > 0 {
 			c.store.UpdateSensors(data)
-			c.log.Debug("sensor data updated", "count", len(data))
+			c.log.Info("sensor data received from camera", "count", len(data))
 		}
 
 	case pb.RequestType_PUT_STATUS:
 		if status := req.GetStatus(); status != nil {
 			c.store.UpdateStatus(status)
+			c.log.Info("camera status update received")
 		}
 
 	case pb.RequestType_PUT_SETTINGS:
 		if settings := req.GetSettings(); settings != nil {
 			c.store.UpdateSettings(settings)
+			c.log.Info("camera settings update received")
 		}
 
 	case pb.RequestType_PUT_CONTROL:
 		if ctrl := req.GetControl(); ctrl != nil {
 			c.store.UpdateControl(ctrl)
+			c.log.Info("camera control update received")
 		}
 
 	default:
@@ -542,6 +620,7 @@ func (c *Client) requestSettingsState(ctx context.Context) error {
 
 // StartStreaming tells the camera to start streaming to the given RTMP URL.
 func (c *Client) StartStreaming(ctx context.Context, rtmpURL string) error {
+	c.log.Info("starting camera streaming")
 	req := &pb.Request{
 		Type: pb.RequestType_PUT_STREAMING.Enum(),
 		Streaming: &pb.Streaming{
@@ -559,6 +638,7 @@ func (c *Client) StartStreaming(ctx context.Context, rtmpURL string) error {
 
 // StopStreaming tells the camera to stop streaming.
 func (c *Client) StopStreaming(ctx context.Context) error {
+	c.log.Info("stopping camera streaming")
 	empty := ""
 	req := &pb.Request{
 		Type: pb.RequestType_PUT_STREAMING.Enum(),

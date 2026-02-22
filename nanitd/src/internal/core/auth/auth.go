@@ -96,7 +96,7 @@ func (m *TokenManager) Token(ctx context.Context) (*Token, error) {
 
 	// Refresh if token is older than 2 hours (JWT typically expires in ~3h)
 	if time.Since(tok.AuthTime) > 2*time.Hour {
-		m.log.Info("token expired, refreshing")
+		m.log.Info("token expired, refreshing", "age", time.Since(tok.AuthTime).Round(time.Second))
 		return m.doRefresh(ctx, tok)
 	}
 	return tok, nil
@@ -104,6 +104,7 @@ func (m *TokenManager) Token(ctx context.Context) (*Token, error) {
 
 // ForceRefresh triggers a token refresh regardless of expiry.
 func (m *TokenManager) ForceRefresh(ctx context.Context) (*Token, error) {
+	m.log.Info("force-refreshing token")
 	m.mu.RLock()
 	tok := m.token
 	m.mu.RUnlock()
@@ -136,7 +137,7 @@ func (m *TokenManager) doRefresh(ctx context.Context, current *Token) (*Token, e
 	if err := m.store.Save(ctx, newTok); err != nil {
 		m.log.Error("failed to save refreshed token", "error", err)
 	}
-	m.log.Info("token refreshed successfully")
+	m.log.Info("token refreshed successfully", "revision", newTok.Revision, "baby_count", len(newTok.Babies))
 	return newTok, nil
 }
 
@@ -186,13 +187,17 @@ func (a *NanitAuth) Refresh(ctx context.Context, current *Token) (*Token, error)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
+		a.log.Error("token refresh HTTP request failed", "error", err)
 		return nil, fmt.Errorf("refresh request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		a.log.Error("token refresh returned non-200", "status", resp.StatusCode)
 		return nil, fmt.Errorf("refresh: HTTP %d", resp.StatusCode)
 	}
+
+	a.log.Info("token refresh succeeded")
 
 	var result refreshResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -355,6 +360,7 @@ type MessagesResponse struct {
 // GetMessages fetches recent messages/events for a baby.
 func (a *NanitAPI) GetMessages(ctx context.Context, authToken, babyUID string, limit int) ([]MessageEntry, error) {
 	url := fmt.Sprintf("%s/babies/%s/messages?limit=%d", a.apiBase, babyUID, limit)
+	a.log.Info("fetching cloud messages", "baby_uid", babyUID, "limit", limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -363,11 +369,13 @@ func (a *NanitAPI) GetMessages(ctx context.Context, authToken, babyUID string, l
 
 	resp, err := a.client.Do(req)
 	if err != nil {
+		a.log.Error("cloud messages request failed", "baby_uid", babyUID, "error", err)
 		return nil, fmt.Errorf("get messages: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		a.log.Error("cloud messages returned non-200", "baby_uid", babyUID, "status", resp.StatusCode)
 		return nil, fmt.Errorf("get messages: HTTP %d", resp.StatusCode)
 	}
 
@@ -375,5 +383,6 @@ func (a *NanitAPI) GetMessages(ctx context.Context, authToken, babyUID string, l
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("get messages: decode: %w", err)
 	}
+	a.log.Info("cloud messages fetched", "baby_uid", babyUID, "count", len(result.Messages))
 	return result.Messages, nil
 }

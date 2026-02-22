@@ -39,7 +39,19 @@ func run() error {
 	}
 
 	log := setupLogger(cfg.Log)
-	log.Info("starting nanitd")
+	log.Info("starting nanitd",
+		"http_addr", cfg.HTTP.Addr,
+		"cors_all", cfg.HTTP.CORSAll,
+		"api_base", cfg.Nanit.APIBase,
+		"camera_uid", cfg.Nanit.CameraUID,
+		"baby_uid", cfg.Nanit.BabyUID,
+		"camera_ip", cfg.Nanit.CameraIP,
+		"mqtt_enabled", cfg.MQTT.Enabled,
+		"mqtt_broker", cfg.MQTT.Broker,
+		"hls_enabled", cfg.HLS.Enabled,
+		"log_level", cfg.Log.Level,
+		"session_path", cfg.Session.Path,
+	)
 
 	tokenStore := auth.NewFileTokenStore(cfg.Session.Path)
 	nanitAuth := auth.NewNanitAuth(cfg.Nanit.APIBase, log.With("component", "auth"))

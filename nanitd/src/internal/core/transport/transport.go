@@ -22,6 +22,10 @@ type Conn interface {
 	Recv(ctx context.Context) (*pb.Message, error)
 	// Close closes the underlying connection.
 	Close() error
+	// Ping sends a WebSocket-level ping frame.
+	Ping() error
+	// SetReadDeadline sets the read deadline on the underlying connection.
+	SetReadDeadline(t time.Time) error
 }
 
 // Dialer creates WebSocket connections to cameras.
@@ -38,7 +42,11 @@ type wsConn struct {
 }
 
 func newWSConn(ws *websocket.Conn, log *slog.Logger) *wsConn {
-	return &wsConn{ws: ws, log: log}
+	c := &wsConn{ws: ws, log: log}
+	ws.SetPongHandler(func(appData string) error {
+		return ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+	})
+	return c
 }
 
 func (c *wsConn) Send(_ context.Context, msg *pb.Message) error {
@@ -75,6 +83,16 @@ func (c *wsConn) Recv(_ context.Context) (*pb.Message, error) {
 
 func (c *wsConn) Close() error {
 	return c.ws.Close()
+}
+
+func (c *wsConn) Ping() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ws.WriteControl(websocket.PingMessage, []byte("keepalive"), time.Now().Add(5*time.Second))
+}
+
+func (c *wsConn) SetReadDeadline(t time.Time) error {
+	return c.ws.SetReadDeadline(t)
 }
 
 // --- Cloud Dialer ---

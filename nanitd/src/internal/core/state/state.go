@@ -240,6 +240,7 @@ func (s *StateStore) UpdateSensors(data []*pb.SensorData) {
 		}
 
 		s.sensors[st] = val
+		s.log.Info("sensor updated", "type", st, "value", val.Value, "is_alert", val.IsAlert, "raw", val.RawValue)
 	}
 
 	s.bus.Publish(Event{Type: EventSensorUpdate, Data: s.sensorsSnapshot()})
@@ -264,22 +265,27 @@ func (s *StateStore) UpdateSettings(settings *pb.Settings) {
 	if settings.NightVision != nil {
 		v := settings.GetNightVision()
 		s.settings.NightVision = &v
+		s.log.Info("setting updated", "key", "night_vision", "value", v)
 	}
 	if settings.SleepMode != nil {
 		v := settings.GetSleepMode()
 		s.settings.SleepMode = &v
+		s.log.Info("setting updated", "key", "sleep_mode", "value", v)
 	}
 	if settings.StatusLightOn != nil {
 		v := settings.GetStatusLightOn()
 		s.settings.StatusLightOn = &v
+		s.log.Info("setting updated", "key", "status_light_on", "value", v)
 	}
 	if settings.Volume != nil {
 		v := settings.GetVolume()
 		s.settings.Volume = &v
+		s.log.Info("setting updated", "key", "volume", "value", v)
 	}
 	if settings.MicMuteOn != nil {
 		v := settings.GetMicMuteOn()
 		s.settings.MicMuteOn = &v
+		s.log.Info("setting updated", "key", "mic_mute_on", "value", v)
 	}
 
 	s.bus.Publish(Event{Type: EventSettingsUpdate, Data: s.settings})
@@ -301,6 +307,7 @@ func (s *StateStore) UpdateControl(ctrl *pb.Control) {
 			v = "off"
 		}
 		s.control.NightLight = &v
+		s.log.Info("control updated", "key", "night_light", "value", v)
 	}
 
 	s.bus.Publish(Event{Type: EventControlUpdate, Data: s.control})
@@ -333,6 +340,7 @@ func (s *StateStore) SetConnected(connected bool) {
 	s.status.Connected = connected
 	s.mu.Unlock()
 
+	s.log.Info("camera connection state changed", "connected", connected)
 	if connected {
 		s.bus.Publish(Event{Type: EventConnected})
 	} else {
@@ -346,6 +354,7 @@ func (s *StateStore) SetStream(active bool, rtmpURL string) {
 	s.stream = StreamInfo{Active: active, RTMPUrl: rtmpURL}
 	s.mu.Unlock()
 
+	s.log.Info("stream state changed", "active", active)
 	s.bus.Publish(Event{Type: EventStreamUpdate, Data: s.stream})
 }
 
