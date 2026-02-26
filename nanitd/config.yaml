@@ -6,6 +6,7 @@ url: https://github.com/wealthystudent/ha-nanit
 image: ghcr.io/wealthystudent/nanitd-{arch}
 arch:
   - amd64
+  - aarch64
 init: false
 startup: application
 boot: auto
